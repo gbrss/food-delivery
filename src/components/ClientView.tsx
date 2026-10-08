@@ -32,6 +32,7 @@ import {
   Driver,
 } from '../types/domain.ts';
 import { LiveTrackingMap } from './LiveTrackingMap.tsx';
+import { BUNDLED_IMAGES } from '../lib/images.ts';
 
 interface ClientViewProps {
   user: User;
@@ -74,7 +75,7 @@ interface ClientViewProps {
   onSelectTrackingOrder: (order: Order) => void;
 }
 
-const HERO_IMAGE = '/src/assets/images/hero_food_delivery_1791416748217.jpg';
+const HERO_IMAGE = BUNDLED_IMAGES.hero;
 
 export const ClientView: React.FC<ClientViewProps> = ({
   user,

@@ -11,7 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'robots.txt', 'sitemap.xml'],
+        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'robots.txt', 'sitemap.xml', '_redirects'],
         manifest: {
           id: '/',
           name: 'Food Delivery – Gastronomía & GPS',

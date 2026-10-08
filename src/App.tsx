@@ -40,6 +40,7 @@ import { DriverView } from './components/DriverView.tsx';
 import { AdminView } from './components/AdminView.tsx';
 import { WebpayModal } from './components/WebpayModal.tsx';
 import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallButton.tsx';
+import { subscribeRealtimeEvents } from './lib/runtimeApi.ts';
 
 type PortalPath = '/portales' | '/cliente' | '/comercio' | '/cocina' | '/repartidor' | '/admin';
 
@@ -226,91 +227,101 @@ export default function App() {
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout>;
 
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        ws?.send(
-          JSON.stringify({
-            type: 'auth:identify',
-            userId: currentUser.id,
-            role: activeRole,
-          })
+    const handleRealtimeMessage = (msg: { type: string; payload: any }) => {
+      if (msg.type === 'order:created' || msg.type === 'order:updated') {
+        const incomingOrder: Order = msg.payload;
+        setOrders((prev) => {
+          const exists = prev.some((o) => o.id === incomingOrder.id);
+          if (!exists) return [incomingOrder, ...prev];
+          return prev.map((o) => (o.id === incomingOrder.id ? incomingOrder : o));
+        });
+        setSelectedTrackingOrder((prev) =>
+          prev && prev.id === incomingOrder.id ? incomingOrder : prev
         );
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'order:created' || msg.type === 'order:updated') {
-            const incomingOrder: Order = msg.payload;
-            setOrders((prev) => {
-              const exists = prev.some((o) => o.id === incomingOrder.id);
-              if (!exists) return [incomingOrder, ...prev];
-              return prev.map((o) => (o.id === incomingOrder.id ? incomingOrder : o));
-            });
-            setSelectedTrackingOrder((prev) =>
-              prev && prev.id === incomingOrder.id ? incomingOrder : prev
-            );
-          } else if (msg.type === 'kitchen:new_order') {
-            if (currentPortal === '/cocina' || currentPortal === '/comercio') {
-              playKitchenBellSound();
-            }
-          } else if (msg.type === 'driver:location_updated') {
-            const loc = msg.payload;
-            setDriver((prev) => ({
-              ...prev,
-              currentLat: loc.lat,
-              currentLng: loc.lng,
-            }));
-          } else if (msg.type === 'driver:updated') {
-            setDriver(msg.payload);
-          } else if (msg.type === 'restaurant:updated') {
-            const updatedRest: Restaurant = msg.payload;
-            setRestaurants((prev) =>
-              prev.map((r) => (r.id === updatedRest.id ? updatedRest : r))
-            );
-          } else if (msg.type === 'restaurant:created') {
-            const createdRest: Restaurant = msg.payload;
-            setRestaurants((prev) => {
-              if (prev.some((r) => r.id === createdRest.id)) return prev;
-              return [...prev, createdRest];
-            });
-          } else if (msg.type === 'product:created') {
-            const createdProd: Product = msg.payload;
-            setProducts((prev) => {
-              if (prev.some((p) => p.id === createdProd.id)) return prev;
-              return [createdProd, ...prev];
-            });
-          } else if (msg.type === 'product:updated') {
-            const updatedProd: Product = msg.payload;
-            setProducts((prev) =>
-              prev.map((p) => (p.id === updatedProd.id ? updatedProd : p))
-            );
-          } else if (msg.type === 'notification:created') {
-            const notif: NotificationItem = msg.payload;
-            setNotifications((prev) => {
-              if (prev.some((n) => n.id === notif.id)) return prev;
-              return [notif, ...prev];
-            });
-            // Show toast only if notification belongs to the current independent site role
-            if (notif.role === activeRole) {
-              setToastBanner({ title: notif.title, message: notif.message });
-            }
-          }
-        } catch (err) {
-          console.error('WS message error:', err);
+      } else if (msg.type === 'kitchen:new_order') {
+        if (currentPortal === '/cocina' || currentPortal === '/comercio') {
+          playKitchenBellSound();
         }
-      };
+      } else if (msg.type === 'driver:location_updated') {
+        const loc = msg.payload;
+        setDriver((prev) => ({
+          ...prev,
+          currentLat: loc.lat,
+          currentLng: loc.lng,
+        }));
+      } else if (msg.type === 'driver:updated') {
+        setDriver(msg.payload);
+      } else if (msg.type === 'restaurant:updated') {
+        const updatedRest: Restaurant = msg.payload;
+        setRestaurants((prev) =>
+          prev.map((r) => (r.id === updatedRest.id ? updatedRest : r))
+        );
+      } else if (msg.type === 'restaurant:created') {
+        const createdRest: Restaurant = msg.payload;
+        setRestaurants((prev) => {
+          if (prev.some((r) => r.id === createdRest.id)) return prev;
+          return [...prev, createdRest];
+        });
+      } else if (msg.type === 'product:created') {
+        const createdProd: Product = msg.payload;
+        setProducts((prev) => {
+          if (prev.some((p) => p.id === createdProd.id)) return prev;
+          return [createdProd, ...prev];
+        });
+      } else if (msg.type === 'product:updated') {
+        const updatedProd: Product = msg.payload;
+        setProducts((prev) =>
+          prev.map((p) => (p.id === updatedProd.id ? updatedProd : p))
+        );
+      } else if (msg.type === 'notification:created') {
+        const notif: NotificationItem = msg.payload;
+        setNotifications((prev) => {
+          if (prev.some((n) => n.id === notif.id)) return prev;
+          return [notif, ...prev];
+        });
+        if (notif.role === activeRole) {
+          setToastBanner({ title: notif.title, message: notif.message });
+        }
+      }
+    };
 
-      ws.onclose = () => {
-        reconnectTimer = setTimeout(connect, 2500);
-      };
+    const unsubscribeLocal = subscribeRealtimeEvents(handleRealtimeMessage);
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          ws?.send(
+            JSON.stringify({
+              type: 'auth:identify',
+              userId: currentUser.id,
+              role: activeRole,
+            })
+          );
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            handleRealtimeMessage(msg);
+          } catch (err) {
+            console.error('WS message error:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          reconnectTimer = setTimeout(connect, 4000);
+        };
+      } catch {
+        // Ignore WS connection error on static hosting
+      }
     };
 
     connect();
 
     return () => {
+      unsubscribeLocal();
       clearTimeout(reconnectTimer);
       ws?.close();
     };

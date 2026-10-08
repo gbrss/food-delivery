@@ -29,6 +29,11 @@ export const GENERATED_IMAGES = {
   tacos: '/src/assets/images/rest_tacos_mexican_1791416784194.jpg',
 };
 
+const safeWebpayCode =
+  typeof process !== 'undefined' && process.env && process.env.WEBPAY_COMMERCE_CODE
+    ? process.env.WEBPAY_COMMERCE_CODE
+    : '597055555532';
+
 export interface UserWithCredentials extends User {
   passwordHash: string;
 }
@@ -53,7 +58,7 @@ export class InMemoryDatabase {
     baseDeliveryFeeClp: 2500,
     driverSharePercent: 85,
     webpayEnvironment: 'INTEGRATION',
-    webpayCommerceCode: process.env.WEBPAY_COMMERCE_CODE || '597055555532',
+    webpayCommerceCode: safeWebpayCode,
     maxLocationHistoryPerOrder: 25,
   };
   nextOrderNumber = 1049;
