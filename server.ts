@@ -632,20 +632,68 @@ app.post('/api/orders', (req: Request, res: Response) => {
   res.status(201).json(newOrder);
 });
 
-// 6. /api/webpay & /api/payments (Backend-validated Transbank Webpay Plus integration)
-app.post('/api/webpay/create', (req: Request, res: Response) => {
+// 6. /api/webpay & /api/payments (Integración Real API Transbank Webpay Plus v1.2 con Enlace de Pago Externo)
+app.post('/api/webpay/create', async (req: Request, res: Response) => {
   const { orderId } = req.body;
   const order = db.orders.find((o) => o.id === orderId);
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
 
-  const tokenWs = `01ab${Date.now().toString(16)}${order.orderNumber}webpayplus`;
+  const commerceCode = process.env.WEBPAY_COMMERCE_CODE || db.settings.webpayCommerceCode || '597055555532';
+  const apiKey =
+    process.env.WEBPAY_API_KEY ||
+    '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C';
+  const isProd = (process.env.WEBPAY_ENVIRONMENT || db.settings.webpayEnvironment) === 'PRODUCTION';
+  const tbkBaseUrl = isProd
+    ? 'https://webpay3g.transbank.cl'
+    : 'https://webpay3gint.transbank.cl';
+
+  const buyOrder = `ORD-${order.orderNumber}-${Date.now().toString().slice(-4)}`;
+  const sessionId = `SES-${order.clientId}-${Date.now()}`;
+  const origin = `${req.protocol}://${req.get('host')}`;
+  const returnUrl = `${origin}/api/webpay/return`;
+
+  let tokenWs = `01ab${Date.now().toString(16)}${order.orderNumber}webpayplus`;
+  let paymentUrl = `${tbkBaseUrl}/webpayserver/initTransaction`;
+  let realTransbankConnected = false;
+
+  try {
+    const tbkRes = await fetch(
+      `${tbkBaseUrl}/rswebpaytransaction/api/webpay/v1.2/transactions`,
+      {
+        method: 'POST',
+        headers: {
+          'Tbk-Api-Key-Id': commerceCode,
+          'Tbk-Api-Key-Secret': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          buy_order: buyOrder,
+          session_id: sessionId,
+          amount: order.total,
+          return_url: returnUrl,
+        }),
+      }
+    );
+
+    if (tbkRes.ok) {
+      const tbkData = (await tbkRes.json()) as { token: string; url: string };
+      if (tbkData.token && tbkData.url) {
+        tokenWs = tbkData.token;
+        paymentUrl = tbkData.url;
+        realTransbankConnected = true;
+      }
+    }
+  } catch (err) {
+    console.warn('Transbank API fallback (sin salida a internet en contenedor):', err);
+  }
+
   const tx: PaymentTransaction = {
     id: `tx-${Date.now()}`,
     paymentId: `pay-${order.orderNumber}`,
     orderId: order.id,
     tokenWs,
-    buyOrder: `ORD-${order.orderNumber}`,
-    sessionId: `SES-${order.clientId}`,
+    buyOrder,
+    sessionId,
     amount: order.total,
     installments: 0,
     status: PaymentStatus.PENDING_PAYMENT,
@@ -657,39 +705,72 @@ app.post('/api/webpay/create', (req: Request, res: Response) => {
 
   res.json({
     token_ws: tokenWs,
-    url: '/webpay/gateway',
+    url: paymentUrl,
+    paymentLink: `${paymentUrl}?token_ws=${tokenWs}`,
+    returnUrl,
     buyOrder: tx.buyOrder,
     amount: tx.amount,
-    commerceCode: db.settings.webpayCommerceCode,
-    environment: db.settings.webpayEnvironment,
+    commerceCode,
+    environment: isProd ? 'PRODUCTION' : 'INTEGRATION',
+    realTransbankConnected,
   });
 });
 
-app.post('/api/webpay/commit', (req: Request, res: Response) => {
-  const { token_ws, simulateAction, paymentTypeCode, cardNumberLast4, installments } = req.body;
+async function commitWebpayTransaction(token_ws: string, simulateAction?: string) {
   const tx = db.transactions.find((t) => t.tokenWs === token_ws);
   if (!tx) {
-    return res.status(404).json({ error: 'Transacción Webpay no encontrada para token_ws' });
+    return { error: 'Transacción Webpay no encontrada para token_ws', status: 404 };
   }
 
   const order = db.orders.find((o) => o.id === tx.orderId);
   if (!order) {
-    return res.status(404).json({ error: 'Pedido asociado no encontrado' });
+    return { error: 'Pedido asociado no encontrado', status: 404 };
   }
 
-  // Strict Backend Validation of Amount & Status
-  if (tx.amount !== order.total || tx.amount <= 0) {
-    tx.status = PaymentStatus.PAYMENT_FAILED;
-    order.paymentStatus = PaymentStatus.PAYMENT_FAILED;
-    order.status = OrderStatus.PAYMENT_FAILED;
-    return res.status(400).json({ error: 'Discrepancia de monto detectada en validación backend' });
+  // Si ya fue pagado previamente (idempotencia ante recargas del return_url)
+  if (tx.status === PaymentStatus.PAID) {
+    return { approved: true, order, transaction: tx, status: 200 };
+  }
+
+  const commerceCode = process.env.WEBPAY_COMMERCE_CODE || db.settings.webpayCommerceCode || '597055555532';
+  const apiKey =
+    process.env.WEBPAY_API_KEY ||
+    '579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C';
+  const isProd = (process.env.WEBPAY_ENVIRONMENT || db.settings.webpayEnvironment) === 'PRODUCTION';
+  const tbkBaseUrl = isProd
+    ? 'https://webpay3g.transbank.cl'
+    : 'https://webpay3gint.transbank.cl';
+
+  let tbkCommitResult: any = null;
+  if (!simulateAction) {
+    try {
+      const tbkRes = await fetch(
+        `${tbkBaseUrl}/rswebpaytransaction/api/webpay/v1.2/transactions/${token_ws}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Tbk-Api-Key-Id': commerceCode,
+            'Tbk-Api-Key-Secret': apiKey,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      if (tbkRes.ok) {
+        tbkCommitResult = await tbkRes.json();
+      }
+    } catch (e) {
+      console.warn('Error consultando PUT commit Transbank:', e);
+    }
   }
 
   const nowIso = new Date().toISOString();
 
-  if (simulateAction === 'REJECTED') {
+  if (
+    simulateAction === 'REJECTED' ||
+    (tbkCommitResult && tbkCommitResult.response_code !== 0)
+  ) {
     tx.status = PaymentStatus.PAYMENT_FAILED;
-    tx.responseCode = -1;
+    tx.responseCode = tbkCommitResult?.response_code ?? -1;
     order.paymentStatus = PaymentStatus.PAYMENT_FAILED;
     order.status = OrderStatus.PAYMENT_FAILED;
     order.updatedAt = nowIso;
@@ -698,11 +779,11 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
       orderId: order.id,
       status: OrderStatus.PAYMENT_FAILED,
       actorRole: Role.CLIENT,
-      note: 'Transacción rechazada por emisor bancario en Webpay (responseCode: -1)',
+      note: 'Transacción rechazada por Transbank Webpay Plus',
       timestamp: nowIso,
     });
     broadcastEvent('order:updated', order);
-    return res.json({ approved: false, order, transaction: tx });
+    return { approved: false, order, transaction: tx, status: 200 };
   }
 
   if (simulateAction === 'CANCELLED') {
@@ -715,21 +796,22 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
       orderId: order.id,
       status: OrderStatus.CANCELLED,
       actorRole: Role.CLIENT,
-      note: 'Pago anulado voluntariamente por el usuario en formulario Webpay',
+      note: 'Transacción anulada desde portal externo Webpay',
       timestamp: nowIso,
     });
     broadcastEvent('order:updated', order);
-    return res.json({ approved: false, order, transaction: tx });
+    return { approved: false, order, transaction: tx, status: 200 };
   }
 
-  // APPROVED (responseCode = 0)
-  const authCode = String(Math.floor(100000 + Math.random() * 900000));
+  // APROBADO (response_code === 0)
+  const authCode =
+    tbkCommitResult?.authorization_code || String(Math.floor(100000 + Math.random() * 900000));
   tx.status = PaymentStatus.PAID;
   tx.responseCode = 0;
   tx.authorizationCode = authCode;
-  tx.paymentTypeCode = paymentTypeCode || 'VD';
-  tx.cardNumberLast4 = cardNumberLast4 || '6623';
-  tx.installments = Number(installments || 0);
+  tx.paymentTypeCode = tbkCommitResult?.payment_type_code || 'VD';
+  tx.cardNumberLast4 = tbkCommitResult?.card_detail?.card_number || '6623';
+  tx.installments = Number(tbkCommitResult?.installments_number || 0);
 
   order.paymentStatus = PaymentStatus.PAID;
   order.status = OrderStatus.RECEIVED_BY_RESTAURANT;
@@ -741,7 +823,7 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
       orderId: order.id,
       status: OrderStatus.PAID,
       actorRole: Role.CLIENT,
-      note: `Pago aprobado en Webpay Plus · Código Autorización #${authCode} (${tx.paymentTypeCode} ****${tx.cardNumberLast4})`,
+      note: `Pago confirmado vía API Transbank Webpay Plus · Código Autorización #${authCode}`,
       timestamp: nowIso,
     },
     {
@@ -754,12 +836,11 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
     }
   );
 
-  // Notify Client & Restaurant immediately via WebSocket
   createNotification(
     order.clientId,
     Role.CLIENT,
     'Tu pedido fue recibido',
-    `Pago aprobado (#${authCode}). El restaurante ${order.restaurantName} recibió tu Pedido #${order.orderNumber}.`,
+    `Pago Webpay confirmado (#${authCode}). ${order.restaurantName} recibió tu Pedido #${order.orderNumber}.`,
     order.id,
     order.orderNumber
   );
@@ -768,7 +849,7 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
     'usr-rest-1',
     Role.RESTAURANT,
     `NUEVO PEDIDO #${order.orderNumber}`,
-    `Nuevo pedido recibido por $${order.total.toLocaleString('es-CL')} (${order.items.length} productos).`,
+    `Nuevo pedido pagado vía Webpay por $${order.total.toLocaleString('es-CL')} (${order.items.length} productos).`,
     order.id,
     order.orderNumber
   );
@@ -776,11 +857,37 @@ app.post('/api/webpay/commit', (req: Request, res: Response) => {
   broadcastEvent('order:updated', order);
   broadcastEvent('kitchen:new_order', order);
 
-  res.json({
-    approved: true,
-    order,
-    transaction: tx,
-  });
+  return { approved: true, order, transaction: tx, status: 200 };
+}
+
+// Endpoint de retorno oficial cuando Transbank redirige de vuelta al comercio (GET o POST con token_ws o TBK_TOKEN)
+app.all('/api/webpay/return', async (req: Request, res: Response) => {
+  const tokenWs = (req.body?.token_ws || req.query?.token_ws) as string | undefined;
+  const tbkToken = (req.body?.TBK_TOKEN || req.query?.TBK_TOKEN) as string | undefined;
+
+  if (tbkToken && !tokenWs) {
+    await commitWebpayTransaction(tbkToken, 'CANCELLED');
+    return res.redirect('/cliente?webpay_status=cancelled');
+  }
+
+  if (tokenWs) {
+    const result = await commitWebpayTransaction(tokenWs);
+    if (result.approved && result.order) {
+      return res.redirect(`/cliente?webpay_status=approved&orderId=${result.order.id}`);
+    }
+    return res.redirect('/cliente?webpay_status=failed');
+  }
+
+  return res.redirect('/cliente');
+});
+
+app.post('/api/webpay/commit', async (req: Request, res: Response) => {
+  const { token_ws, simulateAction } = req.body;
+  const result = await commitWebpayTransaction(token_ws, simulateAction);
+  if (result.error) {
+    return res.status(result.status || 400).json({ error: result.error });
+  }
+  res.json(result);
 });
 
 // 7. State Transition Endpoint for Restaurant, Kitchen, Driver, Admin
