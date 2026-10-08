@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Food Delivery – Plataforma Gastronómica, Webpay y Seguimiento GPS</title>
+    <meta
+      name="description"
+      content="Plataforma integral de delivery gastronómico conectando clientes, restaurantes, cocina, repartidores con seguimiento GPS en tiempo real y pagos Webpay Plus."
+    />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FoodDelivery" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+
+    <!-- OpenGraph Social Cards -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Food Delivery" />
+    <meta property="og:title" content="Food Delivery – Plataforma Gastronómica, Webpay y Seguimiento GPS" />
+    <meta
+      property="og:description"
+      content="Pide en tus restaurantes favoritos, personaliza tu orden, paga seguro con Webpay Plus y sigue a tu repartidor por GPS en tiempo real."
+    />
+
+    <!-- Twitter Cards -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Food Delivery – Plataforma Gastronómica, Webpay y Seguimiento GPS" />
+    <meta
+      name="twitter:description"
+      content="Pide en tus restaurantes favoritos, personaliza tu orden, paga seguro con Webpay Plus y sigue a tu repartidor por GPS en tiempo real."
+    />
+
+    <!-- Google Fonts: Syne (Display), Plus Jakarta Sans (Body), JetBrains Mono (Tabular Telemetry) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Leaflet CSS for Interactive Maps -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+
+    <!-- Schema.org Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "Food Delivery",
+            "applicationCategory": "FoodEstablishmentReservation",
+            "operatingSystem": "All",
+            "description": "Plataforma integral de delivery de comida con seguimiento GPS en tiempo real, comandas de cocina y pagos Webpay Plus.",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "CLP"
+            }
+          },
+          {
+            "@type": "FoodEstablishment",
+            "name": "La Brasa Artesanal & Smash Burgers",
+            "servesCuisine": ["Hamburguesas", "Americana", "Artesanal"],
+            "priceRange": "$$",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Av. Providencia 2140",
+              "addressLocality": "Santiago",
+              "addressRegion": "RM",
+              "addressCountry": "CL"
+            },
+            "aggregateRating": {
+              "@type": "AggregateRating",
+              "ratingValue": "4.9",
+              "reviewCount": "342"
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body class="bg-[#F9F9F8] text-slate-900 antialiased selection:bg-orange-600 selection:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

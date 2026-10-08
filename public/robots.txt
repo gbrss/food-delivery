@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Allow: /restaurantes
+Allow: /restaurante/
+Disallow: /api/
+Disallow: /admin/
+Disallow: /cocina/
+
+Sitemap: /sitemap.xml
